@@ -24,9 +24,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import org.json.JSONArray
-import org.json.JSONObject
-import java.io.ByteArrayInputStream
+import com.google.gson.stream.JsonReader
+import com.google.gson.stream.JsonToken
+import java.io.BufferedInputStream
+import java.io.InputStreamReader
 import java.util.zip.ZipInputStream
 
 private val Ink = Color(0xFF21162C)
@@ -137,7 +138,7 @@ private fun AnalyzerHome(data: InstagramData, onImport: () -> Unit, onExportCsv:
                 item { Panel("اتصال رسمی Instagram", "اتصال خودکار Insights فقط با مجوز رسمی Meta و حساب حرفه‌ای مجاز خواهد بود. این نسخه از رمز عبور یا کوکی استفاده نمی‌کند و فعلاً اطلاعات را دستی یا از خروجی رسمی می‌گیرد.") {} }
             }
         }
-        Text("نسخه 2.0.0 · استودیوی رشد و تحلیل محلی", Modifier.fillMaxWidth().padding(10.dp), textAlign = TextAlign.Center, color = Color.Gray, fontSize = 11.sp)
+        Text("نسخه 2.1.1 · استودیوی رشد و تحلیل محلی", Modifier.fillMaxWidth().padding(10.dp), textAlign = TextAlign.Center, color = Color.Gray, fontSize = 11.sp)
     }
 }
 
@@ -161,51 +162,194 @@ private fun Panel(title: String, body: String, extra: @Composable ColumnScope.()
 }
 
 private object InstagramExportParser {
+    private val followerFile = Regex("(^|/)followers(_\\d+)?\\.json$", RegexOption.IGNORE_CASE)
+    private val followingFile = Regex("(^|/)following(_\\d+)?\\.json$", RegexOption.IGNORE_CASE)
+
     fun parse(context: Context, uri: Uri): InstagramData {
-        val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: error("فایل انتخاب‌شده قابل خواندن نیست")
-        if (bytes.isEmpty()) error("فایل خالی است")
-        val isZip = bytes.size >= 4 && bytes[0] == 0x50.toByte() && bytes[1] == 0x4B.toByte()
-        if (!isZip) {
-            val root = org.json.JSONTokener(bytes.toString(Charsets.UTF_8)).nextValue()
-            val parsed = InstagramData(followers = namesFromObject(root, "followers"), following = namesFromObject(root, "following"))
-            if (parsed.followers.isEmpty() && parsed.following.isEmpty()) error("این فایل JSON شامل فهرست followers یا following قابل‌شناسایی نیست")
-            return recordSnapshot(context, parsed.followers, parsed.following)
+        val source = context.contentResolver.openInputStream(uri)
+            ?: error("فایل انتخاب‌شده قابل خواندن نیست")
+
+        BufferedInputStream(source).use { buffered ->
+            buffered.mark(4)
+            val signature = ByteArray(4)
+            val count = buffered.read(signature)
+            buffered.reset()
+            if (count <= 0) error("فایل خالی است")
+
+            val isZip = count >= 2 &&
+                signature[0] == 0x50.toByte() &&
+                signature[1] == 0x4B.toByte()
+
+            return if (isZip) parseZip(context, buffered) else parseJson(context, buffered)
         }
-        var followers: Set<String> = emptySet()
-        var following: Set<String> = emptySet()
+    }
+
+    /**
+     * Reads only the two relationship JSON entries from the archive.
+     * Neither the complete ZIP nor a complete JSON document is copied into memory.
+     */
+    private fun parseZip(context: Context, input: java.io.InputStream): InstagramData {
+        val followers = linkedSetOf<String>()
+        val following = linkedSetOf<String>()
         var foundFollowers = false
         var foundFollowing = false
-        ZipInputStream(ByteArrayInputStream(bytes)).use { zip ->
+
+        ZipInputStream(input).use { zip ->
             while (true) {
                 val entry = zip.nextEntry ?: break
-                if (!entry.isDirectory && entry.name.lowercase().endsWith(".json")) {
-                    val normalized = entry.name.lowercase().replace('\\', '/')
-                    val root = runCatching { org.json.JSONTokener(zip.readBytes().toString(Charsets.UTF_8)).nextValue() }.getOrNull()
-                    if (root != null) when {
-                        Regex("(^|/)followers(_\\d+)?\\.json$").containsMatchIn(normalized) -> { followers = followers + extractNames(root); foundFollowers = true }
-                        Regex("(^|/)following(_\\d+)?\\.json$").containsMatchIn(normalized) -> { following = following + extractNames(root); foundFollowing = true }
+                if (!entry.isDirectory && entry.name.endsWith(".json", ignoreCase = true)) {
+                    val normalized = entry.name.replace('\\', '/')
+                    when {
+                        followerFile.containsMatchIn(normalized) -> {
+                            foundFollowers = true
+                            readNamesFromCurrentZipEntry(zip, followers)
+                        }
+                        followingFile.containsMatchIn(normalized) -> {
+                            foundFollowing = true
+                            readNamesFromCurrentZipEntry(zip, following)
+                        }
                     }
                 }
                 zip.closeEntry()
             }
         }
-        if (!foundFollowers && !foundFollowing) error("در ZIP فایل‌های followers_1.json یا following.json پیدا نشد.")
-        if (!foundFollowers || !foundFollowing) error("فایل ZIP ناقص است: فهرست followers یا following پیدا نشد.")
-        if (followers.isEmpty() && following.isEmpty()) error("فایل‌های JSON پیدا شدند، اما نام کاربری قابل استخراج نبود.")
+
+        if (!foundFollowers && !foundFollowing) {
+            error("در ZIP فایل‌های followers_1.json یا following.json پیدا نشد.")
+        }
+        if (!foundFollowers || !foundFollowing) {
+            error("فایل ZIP ناقص است: فهرست followers یا following پیدا نشد.")
+        }
+        if (followers.isEmpty() && following.isEmpty()) {
+            error("فایل‌های ارتباطی پیدا شدند، اما نام کاربری قابل استخراج نبود.")
+        }
         return recordSnapshot(context, followers, following)
     }
 
-    private fun recordSnapshot(context: Context, followers: Set<String>, following: Set<String>): InstagramData {
+    private fun readNamesFromCurrentZipEntry(
+        zip: ZipInputStream,
+        output: MutableSet<String>
+    ) {
+        // Do not close this JsonReader: it wraps the ZipInputStream, which must
+        // remain open so the archive can advance to its next entry.
+        val reader = JsonReader(InputStreamReader(zip, Charsets.UTF_8))
+        reader.isLenient = true
+        collectNames(reader, output)
+    }
+
+    private fun parseJson(context: Context, input: java.io.InputStream): InstagramData {
+        val followers = linkedSetOf<String>()
+        val following = linkedSetOf<String>()
+        val reader = JsonReader(InputStreamReader(input, Charsets.UTF_8))
+        reader.isLenient = true
+        collectNamedLists(reader, followers, following)
+
+        if (followers.isEmpty() && following.isEmpty()) {
+            error("این فایل JSON شامل فهرست followers یا following قابل‌شناسایی نیست.")
+        }
+        return recordSnapshot(context, followers, following)
+    }
+
+    /**
+     * Traverses JSON tokens incrementally. Only username strings are retained.
+     */
+    private fun collectNames(reader: JsonReader, output: MutableSet<String>) {
+        when (reader.peek()) {
+            JsonToken.BEGIN_OBJECT -> {
+                reader.beginObject()
+                while (reader.hasNext()) {
+                    val name = reader.nextName()
+                    if (name == "string_list_data" && reader.peek() == JsonToken.BEGIN_ARRAY) {
+                        readStringListData(reader, output)
+                    } else {
+                        collectNames(reader, output)
+                    }
+                }
+                reader.endObject()
+            }
+            JsonToken.BEGIN_ARRAY -> {
+                reader.beginArray()
+                while (reader.hasNext()) collectNames(reader, output)
+                reader.endArray()
+            }
+            else -> reader.skipValue()
+        }
+    }
+
+    private fun readStringListData(reader: JsonReader, output: MutableSet<String>) {
+        reader.beginArray()
+        while (reader.hasNext()) {
+            if (reader.peek() == JsonToken.BEGIN_OBJECT) {
+                reader.beginObject()
+                while (reader.hasNext()) {
+                    val name = reader.nextName()
+                    if (name == "value" && reader.peek() == JsonToken.STRING) {
+                        reader.nextString().trim().removePrefix("@")
+                            .takeIf { it.isNotBlank() && it != "null" }
+                            ?.let(output::add)
+                    } else {
+                        collectNames(reader, output)
+                    }
+                }
+                reader.endObject()
+            } else {
+                collectNames(reader, output)
+            }
+        }
+        reader.endArray()
+    }
+
+    private fun collectNamedLists(
+        reader: JsonReader,
+        followers: MutableSet<String>,
+        following: MutableSet<String>
+    ) {
+        when (reader.peek()) {
+            JsonToken.BEGIN_OBJECT -> {
+                reader.beginObject()
+                while (reader.hasNext()) {
+                    val name = reader.nextName()
+                    when {
+                        name.equals("followers", true) || name.matches(Regex("followers_\\d+", RegexOption.IGNORE_CASE)) ->
+                            collectNames(reader, followers)
+                        name.equals("following", true) || name.matches(Regex("following_\\d+", RegexOption.IGNORE_CASE)) ->
+                            collectNames(reader, following)
+                        else -> collectNamedLists(reader, followers, following)
+                    }
+                }
+                reader.endObject()
+            }
+            JsonToken.BEGIN_ARRAY -> {
+                // Preserve compatibility with a JSON array containing one relationship list.
+                val temporary = linkedSetOf<String>()
+                collectNames(reader, temporary)
+                followers.addAll(temporary)
+                following.addAll(temporary)
+            }
+            else -> reader.skipValue()
+        }
+    }
+
+    private fun recordSnapshot(
+        context: Context,
+        followers: Set<String>,
+        following: Set<String>
+    ): InstagramData {
         val prefs = context.getSharedPreferences("insta_relationship_history", Context.MODE_PRIVATE)
         val oldFollowers = prefs.getStringSet("followers", emptySet())?.toSet() ?: emptySet()
         val oldFollowing = prefs.getStringSet("following", emptySet())?.toSet() ?: emptySet()
         val hasPrevious = prefs.contains("snapshot_at")
-        val diff = if (hasPrevious) RelationshipAnalytics.compare(oldFollowers, followers, oldFollowing, following) else RelationshipChange()
+        val diff = if (hasPrevious) {
+            RelationshipAnalytics.compare(oldFollowers, followers, oldFollowing, following)
+        } else {
+            RelationshipChange()
+        }
         prefs.edit()
             .putStringSet("followers", followers)
             .putStringSet("following", following)
             .putLong("snapshot_at", System.currentTimeMillis())
             .apply()
+
         return InstagramData(
             followers = followers,
             following = following,
@@ -215,34 +359,5 @@ private object InstagramExportParser {
             removedFollowing = diff.removedFollowing,
             hasPreviousSnapshot = hasPrevious
         )
-    }
-
-    private fun namesFromObject(root: Any?, key: String): Set<String> {
-        if (root is JSONArray) return extractNames(root)
-        val obj = root as? JSONObject ?: return emptySet()
-        val direct = obj.opt(key)
-        if (direct != null && direct !== JSONObject.NULL) return extractNames(direct)
-        return obj.keys().asSequence().filter { it.equals(key, true) || it.startsWith("${key}_", true) }
-            .flatMap { extractNames(obj.opt(it)).asSequence() }.toSet().ifEmpty { extractNames(obj) }
-    }
-
-    private fun extractNames(root: Any?): Set<String> {
-        val out = linkedSetOf<String>()
-        fun visit(value: Any?) {
-            when (value) {
-                is JSONObject -> {
-                    value.optJSONArray("string_list_data")?.let { list ->
-                        for (i in 0 until list.length()) {
-                            val username = list.optJSONObject(i)?.optString("value")?.trim()?.removePrefix("@")
-                            if (!username.isNullOrBlank() && username != "null") out += username
-                        }
-                    }
-                    val keys = value.keys(); while (keys.hasNext()) visit(value.opt(keys.next()))
-                }
-                is JSONArray -> for (i in 0 until value.length()) visit(value.opt(i))
-            }
-        }
-        visit(root)
-        return out
     }
 }
