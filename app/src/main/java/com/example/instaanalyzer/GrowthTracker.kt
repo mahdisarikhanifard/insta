@@ -1,6 +1,7 @@
 package com.example.instaanalyzer
 
 import android.content.Context
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -11,6 +12,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -101,6 +104,10 @@ internal fun GrowthTrackerPanel() {
                 }
             }
         }
+        item {
+            Text("نمودار روند فالوورها", color = Color(0xFF21162C), fontWeight = FontWeight.Bold, fontSize = 16.sp)
+            GrowthTrendChart(snapshots.sortedBy { it.recordedAt }.map { it.followers })
+        }
         item { Text("تاریخچه ثبت‌ها", color = Color(0xFF21162C), fontWeight = FontWeight.Bold, fontSize = 16.sp) }
         if (snapshots.isEmpty()) item { Text("هنوز آماری ثبت نشده است. برای شروع، تعداد فالوورها را وارد کن؛ سایر شاخص‌ها اختیاری‌اند.", color = Color.Gray, fontSize = 13.sp) }
         items(snapshots) { snapshot ->
@@ -157,4 +164,37 @@ private fun MetricInput(label: String, value: String, onValueChange: (String) ->
     OutlinedTextField(value = value, onValueChange = { input -> onValueChange(input.filter { it.isDigit() }.take(9)) },
         label = { Text(label, fontSize = 12.sp) }, singleLine = true,
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
+}
+
+@Composable
+private fun GrowthTrendChart(values: List<Int>) {
+    Column(Modifier.fillMaxWidth().background(Color.White, RoundedCornerShape(16.dp)).padding(14.dp)) {
+        if (values.size < 2) {
+            Text("برای رسم نمودار، حداقل دو ثبت لازم است.", color = Color.Gray, fontSize = 12.sp)
+        } else {
+            val minValue = values.minOrNull()!!.toFloat()
+            val maxValue = values.maxOrNull()!!.toFloat()
+            val range = (maxValue - minValue).coerceAtLeast(1f)
+            Canvas(Modifier.fillMaxWidth().height(150.dp)) {
+                val left = 12f
+                val right = size.width - 12f
+                val top = 12f
+                val bottom = size.height - 12f
+                val points = values.mapIndexed { index, value ->
+                    val x = left + (right - left) * index / (values.size - 1).toFloat()
+                    val y = bottom - (value - minValue) / range * (bottom - top)
+                    androidx.compose.ui.geometry.Offset(x, y)
+                }
+                val path = Path().apply {
+                    moveTo(points.first().x, points.first().y)
+                    points.drop(1).forEach { lineTo(it.x, it.y) }
+                }
+                drawLine(Color(0xFFE9DDE9), androidx.compose.ui.geometry.Offset(left, top), androidx.compose.ui.geometry.Offset(left, bottom), strokeWidth = 1f)
+                drawLine(Color(0xFFE9DDE9), androidx.compose.ui.geometry.Offset(left, bottom), androidx.compose.ui.geometry.Offset(right, bottom), strokeWidth = 1f)
+                drawPath(path, Color(0xFFC13C86), style = Stroke(width = 4f))
+                points.forEach { drawCircle(Color(0xFFC13C86), radius = 5f, center = it) }
+            }
+            Text("کمینه: " + values.minOrNull() + " · بیشینه: " + values.maxOrNull() + " · تغییر خالص: " + (values.last() - values.first()), color = Color.Gray, fontSize = 11.sp)
+        }
+    }
 }

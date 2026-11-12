@@ -1,5 +1,6 @@
 package com.example.instaanalyzer
 
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
@@ -37,7 +38,7 @@ class MainActivity : ComponentActivity() {
     private var pendingCsv by mutableStateOf("")
     private val picker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
         uri?.let {
-            importedData = runCatching { InstagramExportParser.parse(contentResolver, it) }
+            importedData = runCatching { InstagramExportParser.parse(this, it) }
                 .getOrElse { e -> InstagramData(error = e.message ?: "فایل قابل خواندن نیست") }
         }
     }
@@ -65,7 +66,12 @@ class MainActivity : ComponentActivity() {
 data class InstagramData(
     val followers: Set<String> = emptySet(),
     val following: Set<String> = emptySet(),
-    val error: String? = null
+    val error: String? = null,
+    val newFollowers: Set<String> = emptySet(),
+    val lostFollowers: Set<String> = emptySet(),
+    val newFollowing: Set<String> = emptySet(),
+    val removedFollowing: Set<String> = emptySet(),
+    val hasPreviousSnapshot: Boolean = false
 ) {
     val notFollowingBack: List<String> get() = following.minus(followers).sorted()
     val fansNotFollowed: List<String> get() = followers.minus(following).sorted()
@@ -103,6 +109,7 @@ private fun AnalyzerHome(data: InstagramData, onImport: () -> Unit, onExportCsv:
                 item {
                     Panel("شاخص‌های ارتباطی", "${data.mutual.size} ارتباط دوطرفه · ${data.fansNotFollowed.size} نفر تو را دنبال می‌کنند اما تو دنبالشان نیستی · ${data.notFollowingBack.size} نفر از فالووینگ تو، تو را دنبال نمی‌کنند") {}
                 }
+                if (data.hasPreviousSnapshot) item { Panel("تغییرات از خروجی قبلی", "فالوورهای جدید: ${data.newFollowers.size} · فالوورهای ازدست‌رفته: ${data.lostFollowers.size} · فالووینگ‌های جدید: ${data.newFollowing.size} · حذف‌شده از فالووینگ: ${data.removedFollowing.size}") {} }
                 item { Panel("حریم خصوصی", "تحلیل خروجی رسمی روی دستگاه انجام می‌شود. برنامه رمز عبور، کوکی یا نشست ورود اینستاگرام را دریافت نمی‌کند.") {} }
                 item { Panel("رشد مبتنی بر داده", "آمار دوره‌ای را در بخش رشد پیج ثبت کن و عملکرد هر پست و ریلز را در استودیوی محتوا وارد کن تا پیشنهادها بر اساس داده واقعی ساخته شوند.") {} }
                 if (data.error != null) item { Panel("پیام", data.error) {} }
@@ -154,15 +161,15 @@ private fun Panel(title: String, body: String, extra: @Composable ColumnScope.()
 }
 
 private object InstagramExportParser {
-    fun parse(resolver: android.content.ContentResolver, uri: Uri): InstagramData {
-        val bytes = resolver.openInputStream(uri)?.use { it.readBytes() } ?: error("فایل انتخاب‌شده قابل خواندن نیست")
+    fun parse(context: Context, uri: Uri): InstagramData {
+        val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: error("فایل انتخاب‌شده قابل خواندن نیست")
         if (bytes.isEmpty()) error("فایل خالی است")
         val isZip = bytes.size >= 4 && bytes[0] == 0x50.toByte() && bytes[1] == 0x4B.toByte()
         if (!isZip) {
             val root = org.json.JSONTokener(bytes.toString(Charsets.UTF_8)).nextValue()
             val parsed = InstagramData(followers = namesFromObject(root, "followers"), following = namesFromObject(root, "following"))
             if (parsed.followers.isEmpty() && parsed.following.isEmpty()) error("این فایل JSON شامل فهرست followers یا following قابل‌شناسایی نیست")
-            return parsed
+            return recordSnapshot(context, parsed.followers, parsed.following)
         }
         var followers: Set<String> = emptySet()
         var following: Set<String> = emptySet()
@@ -185,7 +192,29 @@ private object InstagramExportParser {
         if (!foundFollowers && !foundFollowing) error("در ZIP فایل‌های followers_1.json یا following.json پیدا نشد.")
         if (!foundFollowers || !foundFollowing) error("فایل ZIP ناقص است: فهرست followers یا following پیدا نشد.")
         if (followers.isEmpty() && following.isEmpty()) error("فایل‌های JSON پیدا شدند، اما نام کاربری قابل استخراج نبود.")
-        return InstagramData(followers, following)
+        return recordSnapshot(context, followers, following)
+    }
+
+    private fun recordSnapshot(context: Context, followers: Set<String>, following: Set<String>): InstagramData {
+        val prefs = context.getSharedPreferences("insta_relationship_history", Context.MODE_PRIVATE)
+        val oldFollowers = prefs.getStringSet("followers", emptySet())?.toSet() ?: emptySet()
+        val oldFollowing = prefs.getStringSet("following", emptySet())?.toSet() ?: emptySet()
+        val hasPrevious = prefs.contains("snapshot_at")
+        val diff = if (hasPrevious) RelationshipAnalytics.compare(oldFollowers, followers, oldFollowing, following) else RelationshipChange()
+        prefs.edit()
+            .putStringSet("followers", followers)
+            .putStringSet("following", following)
+            .putLong("snapshot_at", System.currentTimeMillis())
+            .apply()
+        return InstagramData(
+            followers = followers,
+            following = following,
+            newFollowers = diff.newFollowers,
+            lostFollowers = diff.lostFollowers,
+            newFollowing = diff.newFollowing,
+            removedFollowing = diff.removedFollowing,
+            hasPreviousSnapshot = hasPrevious
+        )
     }
 
     private fun namesFromObject(root: Any?, key: String): Set<String> {
