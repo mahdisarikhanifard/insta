@@ -84,6 +84,7 @@ data class InstagramData(
 @Composable
 private fun AnalyzerHome(data: InstagramData, onImport: () -> Unit, onExportCsv: (String) -> Unit) {
     var tab by remember { mutableStateOf(0) }
+    var relationshipQuery by remember { mutableStateOf("") }
     val context = LocalContext.current
     val tabs = listOf("نمای کلی", "ارتباطات", "رشد پیج", "محتوا", "تحلیل")
     Column(Modifier.fillMaxSize().background(Canvas)) {
@@ -117,18 +118,56 @@ private fun AnalyzerHome(data: InstagramData, onImport: () -> Unit, onExportCsv:
                 item { Panel("رشد مبتنی بر داده", "آمار دوره‌ای را در بخش رشد پیج ثبت کن و عملکرد هر پست و ریلز را در استودیوی محتوا وارد کن تا پیشنهادها بر اساس داده واقعی ساخته شوند.") {} }
                 if (data.error != null) item { Panel("پیام", data.error) {} }
             }
-            1 -> LazyColumn(Modifier.weight(1f).padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                item { Text("فالووینگ تو که فالو‌بک نداده‌اند", fontWeight = FontWeight.Bold, color = Ink) }
-                if (data.notFollowingBack.isEmpty()) item { Text("هنوز داده‌ای برای نمایش وجود ندارد. ابتدا خروجی حساب را وارد کن.") }
-                items(data.notFollowingBack) { username ->
-                    Row(Modifier.fillMaxWidth().background(Color.White, RoundedCornerShape(14.dp)).padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text("@$username", fontWeight = FontWeight.SemiBold)
-                            Text("در فهرست فالووینگ هست، در فالوورها نیست", fontSize = 12.sp, color = Color.Gray)
+            1 -> {
+                val filteredNotFollowingBack = data.notFollowingBack.filter {
+                    it.contains(relationshipQuery.trim(), ignoreCase = true)
+                }
+                LazyColumn(Modifier.weight(1f).padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    item {
+                        Column(Modifier.fillMaxWidth().background(Color.White, RoundedCornerShape(16.dp)).padding(14.dp)) {
+                            Text("فهرست فالو‌بک نداده‌ها", fontWeight = FontWeight.Bold, color = Ink, fontSize = 17.sp)
+                            Spacer(Modifier.height(5.dp))
+                            Text(
+                                "${data.notFollowingBack.size} حساب از فالووینگ تو، در فهرست فالوورهای تو نیستند. روی نام کاربری بزن تا پروفایل همان حساب در اینستاگرام باز شود.",
+                                fontSize = 12.sp, color = Color.Gray, lineHeight = 18.sp
+                            )
+                            Spacer(Modifier.height(10.dp))
+                            OutlinedTextField(
+                                value = relationshipQuery,
+                                onValueChange = { relationshipQuery = it.removePrefix("@").take(30) },
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = true,
+                                label = { Text("جست‌وجوی نام کاربری") },
+                                placeholder = { Text("مثلاً username") }
+                            )
                         }
-                        TextButton(onClick = {
-                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.instagram.com/$username/")))
-                        }) { Text("باز کردن") }
+                    }
+                    if (!data.relationshipDataLoaded) {
+                        item { Panel("ابتدا اطلاعات را وارد کن", "فایل ZIP یا JSON خروجی رسمی اینستاگرام را از بخش نمای کلی وارد کن تا فهرست واقعی حساب‌ها نمایش داده شود.") {} }
+                    } else if (data.notFollowingBack.isEmpty()) {
+                        item { Panel("موردی پیدا نشد", "طبق آخرین خروجی واردشده، همه حساب‌هایی که دنبال می‌کنی در فهرست فالوورهای تو هم هستند.") {} }
+                    } else if (filteredNotFollowingBack.isEmpty()) {
+                        item { Text("با این عبارت، نام کاربری‌ای پیدا نشد.", color = Color.Gray, modifier = Modifier.padding(12.dp)) }
+                    } else {
+                        items(filteredNotFollowingBack, key = { it }) { username ->
+                            Row(
+                                Modifier.fillMaxWidth().background(Color.White, RoundedCornerShape(14.dp)).padding(horizontal = 10.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(Modifier.weight(1f)) {
+                                    TextButton(
+                                        onClick = { openInstagramProfile(context, username) },
+                                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp)
+                                    ) {
+                                        Text("@$username", fontWeight = FontWeight.Bold, color = Pink, fontSize = 15.sp)
+                                    }
+                                    Text("در فالووینگ هست · در فالوورها نیست", fontSize = 11.sp, color = Color.Gray)
+                                }
+                                TextButton(onClick = { openInstagramProfile(context, username) }) {
+                                    Text("مشاهده پروفایل")
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -136,8 +175,15 @@ private fun AnalyzerHome(data: InstagramData, onImport: () -> Unit, onExportCsv:
             3 -> ContentStudioPanel(onExportCsv)
             else -> AnalysisCenter(data)
         }
-        Text("نسخه 2.1.3 · استودیوی رشد و تحلیل محلی", Modifier.fillMaxWidth().padding(10.dp), textAlign = TextAlign.Center, color = Color.Gray, fontSize = 11.sp)
+        Text("نسخه 2.1.4 · فهرست لینک‌دار ارتباطات", Modifier.fillMaxWidth().padding(10.dp), textAlign = TextAlign.Center, color = Color.Gray, fontSize = 11.sp)
     }
+}
+
+private fun openInstagramProfile(context: Context, rawUsername: String) {
+    val username = rawUsername.trim().removePrefix("@")
+    if (!username.matches(Regex("[A-Za-z0-9._]{1,30}"))) return
+    val profileUri = Uri.parse("https://www.instagram.com/$username/")
+    context.startActivity(Intent(Intent.ACTION_VIEW, profileUri))
 }
 
 @Composable
@@ -461,7 +507,7 @@ private object InstagramExportParser {
                     val name = reader.nextName()
                     if (name == "value" && reader.peek() == JsonToken.STRING) {
                         reader.nextString().trim().removePrefix("@")
-                            .takeIf { it.isNotBlank() && it != "null" }
+                            .takeIf { it.matches(Regex("[A-Za-z0-9._]{1,30}")) }
                             ?.let(output::add)
                     } else {
                         collectNames(reader, output)
