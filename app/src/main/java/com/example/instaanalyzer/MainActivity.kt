@@ -132,11 +132,7 @@ private fun AnalyzerHome(data: InstagramData, onImport: () -> Unit, onExportCsv:
             }
             2 -> GrowthTrackerPanel()
             3 -> ContentStudioPanel(onExportCsv)
-            else -> LazyColumn(Modifier.weight(1f).padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                item { Panel("تحلیل رفتار مخاطبان", "تحلیل به‌صورت تجمیعی و بر اساس داده‌های مجاز انجام می‌شود: موضوعات پربازده، نرخ ذخیره و اشتراک‌گذاری، تبدیل Reach به فالوور و روند رشد. از داده‌های یک فرد برای استنباط شخصیت پنهان یا ویژگی‌های حساس استفاده نمی‌شود.") {} }
-                item { Panel("افزایش فالوور پایدار", "روی محتواهایی تمرکز کن که علاوه بر Reach، ذخیره، اشتراک‌گذاری و فالوور جدید ایجاد می‌کنند. از خرید فالوور، ربات، ارسال انبوه پیام و تعامل مصنوعی پرهیز کن.") {} }
-                item { Panel("اتصال رسمی Instagram", "اتصال خودکار Insights فقط با مجوز رسمی Meta و حساب حرفه‌ای مجاز خواهد بود. این نسخه از رمز عبور یا کوکی استفاده نمی‌کند و فعلاً اطلاعات را دستی یا از خروجی رسمی می‌گیرد.") {} }
-            }
+            else -> AnalysisCenter(data)
         }
         Text("نسخه 2.1.1 · استودیوی رشد و تحلیل محلی", Modifier.fillMaxWidth().padding(10.dp), textAlign = TextAlign.Center, color = Color.Gray, fontSize = 11.sp)
     }
@@ -159,6 +155,172 @@ private fun Panel(title: String, body: String, extra: @Composable ColumnScope.()
         Spacer(Modifier.height(10.dp))
         extra()
     }
+}
+
+
+private data class AnalysisCheck(val title: String, val status: String, val detail: String)
+
+@Composable
+private fun AnalysisCenter(data: InstagramData) {
+    val context = LocalContext.current
+    var checks by remember { mutableStateOf<List<AnalysisCheck>>(emptyList()) }
+    var started by remember { mutableStateOf(false) }
+    val success = checks.count { it.status == "موفق" }
+    val missing = checks.count { it.status == "نیازمند داده" }
+    val failed = checks.count { it.status == "ناموفق" }
+
+    LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+        contentPadding = PaddingValues(bottom = 18.dp)) {
+        item {
+            Panel("مرکز تحلیل کامل",
+                "با زدن دکمه، بررسی‌های قابل انجام با اطلاعات ذخیره‌شده روی گوشی اجرا می‌شوند. نتیجه و علت انجام‌نشدن هر بررسی جداگانه نمایش داده خواهد شد.") {
+                Button(onClick = {
+                    checks = runCatching { performFullAnalysis(context, data) }.getOrElse {
+                        listOf(AnalysisCheck("اجرای تحلیل", "ناموفق", "خطای غیرمنتظره: " + (it.message ?: "علت نامشخص")))
+                    }
+                    started = true
+                }, modifier = Modifier.fillMaxWidth()) {
+                    Text(if (started) "اجرای دوباره تحلیل" else "شروع تحلیل کامل")
+                }
+            }
+        }
+        if (!started) {
+            item { Panel("مواردی که بررسی می‌شوند",
+                "فهرست ارتباطات و فالووبک، تغییرات نسبت به خروجی قبلی، روند رشد، عملکرد محتوا و نرخ تعامل، مقایسه قالب‌ها، تقویم انتشار، کفایت داده برای پیشنهاد ساعت انتشار و وضعیت اتصال رسمی Instagram.") {} }
+        } else {
+            item {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Metric("موفق", success.toString())
+                    Metric("نیازمند داده", missing.toString())
+                    Metric("ناموفق", failed.toString())
+                }
+            }
+            item { Panel("خلاصه اجرای تحلیل",
+                "موفق: " + success + " · نیازمند داده: " + missing + " · ناموفق: " + failed +
+                    "\n«نیازمند داده» به معنی خطای برنامه نیست؛ یعنی اطلاعات لازم هنوز وارد نشده یا اتصال مربوطه برقرار نیست.") {} }
+            items(checks) { check ->
+                val color = when (check.status) {
+                    "موفق" -> Color(0xFF237A4B)
+                    "ناموفق" -> Color(0xFFB3261E)
+                    else -> Color(0xFF946200)
+                }
+                Column(Modifier.fillMaxWidth().background(Color.White, RoundedCornerShape(16.dp)).padding(14.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(check.title, modifier = Modifier.weight(1f), color = Ink, fontWeight = FontWeight.Bold)
+                        Text(check.status, color = color, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    Text(check.detail, color = Color(0xFF655B6B), fontSize = 13.sp, lineHeight = 19.sp)
+                }
+            }
+        }
+        item { Panel("محدودیت داده‌ها",
+            "فایل روابط به‌تنهایی سن، جنسیت، علایق یا ساعات فعالیت مخاطبان را مشخص نمی‌کند. این اطلاعات فقط با گزارش معتبر Instagram Insights قابل تحلیل است. برنامه از نام کاربری، شخصیت یا ویژگی حساس افراد را حدس نمی‌زند.") {} }
+    }
+}
+
+private fun performFullAnalysis(context: Context, data: InstagramData): List<AnalysisCheck> {
+    val result = mutableListOf<AnalysisCheck>()
+    if (data.followers.isNotEmpty() && data.following.isNotEmpty()) {
+        result += AnalysisCheck("فهرست فالوورها و فالووینگ", "موفق",
+            "تعداد " + data.followers.size + " فالوور و " + data.following.size + " فالووینگ خوانده شد.")
+        result += AnalysisCheck("تفکیک ارتباطات", "موفق",
+            "ارتباط دوطرفه: " + data.mutual.size + " · فالووبک نداده‌اند: " +
+                data.notFollowingBack.size + " · تو دنبالشان نمی‌کنی: " + data.fansNotFollowed.size)
+    } else {
+        result += AnalysisCheck("فهرست فالوورها و فالووینگ", "نیازمند داده",
+            "برای این بررسی باید هر دو فهرست از فایل خروجی ZIP یا JSON وارد شوند.")
+    }
+
+    if (data.hasPreviousSnapshot) {
+        result += AnalysisCheck("مقایسه با خروجی قبلی", "موفق",
+            "فالوور جدید: " + data.newFollowers.size + " · ازدست‌رفته: " + data.lostFollowers.size +
+                " · فالووینگ جدید: " + data.newFollowing.size + " · حذف‌شده: " + data.removedFollowing.size)
+    } else {
+        result += AnalysisCheck("مقایسه با خروجی قبلی", "نیازمند داده",
+            "خروجی قبلی برای مقایسه وجود ندارد. خروجی بعدی را هم وارد کن تا تغییرات مشخص شوند.")
+    }
+
+    runCatching {
+        val raw = context.getSharedPreferences("insta_analyzer_local_metrics", Context.MODE_PRIVATE)
+            .getString("growth_snapshots", "[]") ?: "[]"
+        val array = org.json.JSONArray(raw)
+        val ordered = (0 until array.length()).mapNotNull { array.optJSONObject(it) }
+            .sortedBy { it.optLong("recordedAt") }
+        if (ordered.size >= 2) {
+            val delta = ordered.last().optInt("followers") - ordered.first().optInt("followers")
+            result += AnalysisCheck("روند رشد فالوورها", "موفق",
+                ordered.size.toString() + " ثبت بررسی شد؛ تغییر خالص: " + delta + " فالوور.")
+        } else {
+            result += AnalysisCheck("روند رشد فالوورها", "نیازمند داده",
+                "فقط " + ordered.size + " ثبت وجود دارد؛ برای روند حداقل دو ثبت در بخش رشد پیج لازم است.")
+        }
+    }.onFailure {
+        result += AnalysisCheck("روند رشد فالوورها", "ناموفق",
+            "خواندن تاریخچه رشد با خطا مواجه شد: " + (it.message ?: "ساختار داده نامعتبر است"))
+    }
+
+    runCatching {
+        val prefs = context.getSharedPreferences("insta_analyzer_studio_v2", Context.MODE_PRIVATE)
+        val records = org.json.JSONArray(prefs.getString("content_records", "[]") ?: "[]")
+        var reach = 0L
+        var interactions = 0L
+        val formats = linkedMapOf<String, MutableList<Double>>()
+        for (i in 0 until records.length()) {
+            val item = records.optJSONObject(i) ?: continue
+            val itemReach = item.optLong("reach")
+            val itemInteractions = item.optLong("likes") + item.optLong("comments") +
+                item.optLong("shares") + item.optLong("saves")
+            reach += itemReach
+            interactions += itemInteractions
+            if (itemReach > 0) {
+                val format = item.optString("format", "نامشخص")
+                formats.getOrPut(format) { mutableListOf() }.add(itemInteractions * 100.0 / itemReach)
+            }
+        }
+        if (records.length() > 0 && reach > 0) {
+            val rate = interactions * 100.0 / reach
+            result += AnalysisCheck("عملکرد محتوا و نرخ تعامل", "موفق",
+                records.length().toString() + " محتوا بررسی شد؛ Reach: " + reach +
+                    " · تعامل: " + interactions + " · نرخ تعامل وزنی: " +
+                    String.format(java.util.Locale.US, "%.2f", rate) + "٪")
+        } else {
+            result += AnalysisCheck("عملکرد محتوا و نرخ تعامل", "نیازمند داده",
+                "محتوای دارای Reach معتبر ثبت نشده است؛ آمار ریلز، پست یا استوری را در بخش محتوا وارد کن.")
+        }
+        if (formats.size >= 2) {
+            val best = formats.mapValues { it.value.average() }.maxByOrNull { it.value }
+            result += AnalysisCheck("مقایسه قالب‌های محتوا", "موفق",
+                "قالب دارای میانگین نرخ تعامل بالاتر: " + (best?.key ?: "نامشخص") +
+                    "؛ نتیجه فقط بر اساس محتواهای ثبت‌شده است.")
+        } else {
+            result += AnalysisCheck("مقایسه قالب‌های محتوا", "نیازمند داده",
+                "برای مقایسه ریلز، پست و استوری، داده معتبر از حداقل دو قالب لازم است.")
+        }
+    }.onFailure {
+        result += AnalysisCheck("عملکرد محتوا", "ناموفق",
+            "خواندن اطلاعات محتوا ناموفق بود: " + (it.message ?: "ساختار داده نامعتبر است"))
+    }
+
+    runCatching {
+        val prefs = context.getSharedPreferences("insta_analyzer_studio_v2", Context.MODE_PRIVATE)
+        val plans = org.json.JSONArray(prefs.getString("calendar_entries", "[]") ?: "[]")
+        if (plans.length() > 0) result += AnalysisCheck("تقویم انتشار", "موفق",
+            plans.length().toString() + " برنامه انتشار بررسی شد.")
+        else result += AnalysisCheck("تقویم انتشار", "نیازمند داده", "هنوز برنامه‌ای در تقویم انتشار ثبت نشده است.")
+    }.onFailure {
+        result += AnalysisCheck("تقویم انتشار", "ناموفق",
+            "خواندن تقویم ناموفق بود: " + (it.message ?: "ساختار داده نامعتبر است"))
+    }
+
+    result += AnalysisCheck("پیشنهاد بهترین ساعت انتشار", "نیازمند داده",
+        "زمان دقیق انتشار هر محتوا ذخیره نمی‌شود؛ بنابراین پیشنهاد ساعت قابل اعتماد ممکن نیست.")
+    result += AnalysisCheck("تحلیل جمعیتی و علایق مخاطبان", "نیازمند داده",
+        "فهرست فالوورها سن، جنسیت، علایق یا ساعات فعالیت را مشخص نمی‌کند؛ گزارش معتبر Insights لازم است.")
+    result += AnalysisCheck("دریافت خودکار Instagram Insights", "نیازمند داده",
+        "اتصال رسمی Meta هنوز در برنامه تنظیم نشده است؛ این قابلیت به مجوز رسمی حساب حرفه‌ای نیاز دارد.")
+    return result
 }
 
 private object InstagramExportParser {
