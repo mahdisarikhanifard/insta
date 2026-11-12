@@ -78,7 +78,7 @@ private fun AnalyzerHome(data: InstagramData, onImport: () -> Unit) {
             }
         }
         Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("نمای کلی", "ارتباطات", "تحلیل").forEachIndexed { i, title ->
+            listOf("نمای کلی", "ارتباطات", "رشد پیج", "تحلیل").forEachIndexed { i, title ->
                 FilterChip(selected = tab == i, onClick = { tab = i }, label = { Text(title) })
             }
         }
@@ -126,6 +126,7 @@ private fun AnalyzerHome(data: InstagramData, onImport: () -> Unit) {
                     }
                 }
             }
+            2 -> GrowthTrackerPanel()
             else -> LazyColumn(Modifier.weight(1f).padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 item {
                     Panel(
@@ -142,7 +143,7 @@ private fun AnalyzerHome(data: InstagramData, onImport: () -> Unit) {
             }
         }
         Text(
-            "نسخه 1.0.1 · تحلیل محلی داده‌های صاحب حساب",
+            "نسخه 1.1.0 · تحلیل محلی و پایش رشد پیج",
             modifier = Modifier.fillMaxWidth().padding(12.dp),
             textAlign = TextAlign.Center,
             color = Color.Gray,
