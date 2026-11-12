@@ -195,7 +195,7 @@ object InstagramExportParser {
     private fun usernameFromHref(href: String?): String? {
         if (href.isNullOrBlank()) return null
         val match = Regex(
-            "^https?://(?:www\\.)?instagram\\.com/([A-Za-z0-9._]{1,30})/?(?:[?#].*)?$",
+            "^https?://(?:www\\.)?instagram\\.com/(?:_u/)?([A-Za-z0-9._]{1,30})/?(?:[?#].*)?$",
             RegexOption.IGNORE_CASE
         ).matchEntire(href.trim()) ?: return null
         return match.groupValues[1]

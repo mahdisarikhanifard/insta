@@ -10,10 +10,10 @@ import java.util.zip.ZipOutputStream
 
 class InstagramExportParserTest {
     private fun relation(username: String): String =
-        """{"title":"$username","string_list_data":[{"href":"https://www.instagram.com/$username/","value":"$username","timestamp":1700000000}]}"""
+        """{"title":"$username","string_list_data":[{"href":"https://www.instagram.com/_u/$username","value":"$username","timestamp":1700000000}]}"""
 
     private fun relationHrefOnly(username: String): String =
-        """{"title":"$username","string_list_data":[{"href":"https://www.instagram.com/$username/","timestamp":1700000000}]}"""
+        """{"title":"$username","string_list_data":[{"href":"https://www.instagram.com/_u/$username","timestamp":1700000000}]}"""
 
     private fun zip(vararg entries: Pair<String, String>): ByteArray {
         val output = ByteArrayOutputStream()
@@ -52,6 +52,15 @@ class InstagramExportParserTest {
         val parsed = InstagramExportParser.parse(ByteArrayInputStream(json.toByteArray()), "following.json")
         assertTrue(parsed.followers.isEmpty())
         assertEquals(setOf("friend"), parsed.following)
+    }
+
+    @Test fun parsesInstagramUnderscoreUProfileLinks() {
+        val json = """{"relationships_following":[{"title":"actual_user","string_list_data":[{"href":"https://www.instagram.com/_u/actual_user","timestamp":1794427088}]}]}"""
+        val parsed = InstagramExportParser.parse(
+            ByteArrayInputStream(json.toByteArray()),
+            "following.json"
+        )
+        assertEquals(setOf("actual_user"), parsed.following)
     }
 
     @Test fun acceptsAnExplicitlyNamedEmptyFollowingJson() {
