@@ -52,6 +52,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        importedData = InstagramExportParser.loadLatest(this)
         setContent {
             MaterialTheme(colorScheme = lightColorScheme(primary = Pink, background = Canvas, surface = Color.White)) {
                 AnalyzerHome(
@@ -72,7 +73,8 @@ data class InstagramData(
     val lostFollowers: Set<String> = emptySet(),
     val newFollowing: Set<String> = emptySet(),
     val removedFollowing: Set<String> = emptySet(),
-    val hasPreviousSnapshot: Boolean = false
+    val hasPreviousSnapshot: Boolean = false,
+    val relationshipDataLoaded: Boolean = false
 ) {
     val notFollowingBack: List<String> get() = following.minus(followers).sorted()
     val fansNotFollowed: List<String> get() = followers.minus(following).sorted()
@@ -134,7 +136,7 @@ private fun AnalyzerHome(data: InstagramData, onImport: () -> Unit, onExportCsv:
             3 -> ContentStudioPanel(onExportCsv)
             else -> AnalysisCenter(data)
         }
-        Text("نسخه 2.1.1 · استودیوی رشد و تحلیل محلی", Modifier.fillMaxWidth().padding(10.dp), textAlign = TextAlign.Center, color = Color.Gray, fontSize = 11.sp)
+        Text("نسخه 2.1.3 · استودیوی رشد و تحلیل محلی", Modifier.fillMaxWidth().padding(10.dp), textAlign = TextAlign.Center, color = Color.Gray, fontSize = 11.sp)
     }
 }
 
@@ -222,7 +224,7 @@ private fun AnalysisCenter(data: InstagramData) {
 
 private fun performFullAnalysis(context: Context, data: InstagramData): List<AnalysisCheck> {
     val result = mutableListOf<AnalysisCheck>()
-    if (data.followers.isNotEmpty() && data.following.isNotEmpty()) {
+    if (data.relationshipDataLoaded) {
         result += AnalysisCheck("فهرست فالوورها و فالووینگ", "موفق",
             "تعداد " + data.followers.size + " فالوور و " + data.following.size + " فالووینگ خوانده شد.")
         result += AnalysisCheck("تفکیک ارتباطات", "موفق",
@@ -230,7 +232,7 @@ private fun performFullAnalysis(context: Context, data: InstagramData): List<Ana
                 data.notFollowingBack.size + " · تو دنبالشان نمی‌کنی: " + data.fansNotFollowed.size)
     } else {
         result += AnalysisCheck("فهرست فالوورها و فالووینگ", "نیازمند داده",
-            "برای این بررسی باید هر دو فهرست از فایل خروجی ZIP یا JSON وارد شوند.")
+            "فهرست روابط در حافظه گوشی پیدا نشد. فایل ZIP/JSON خروجی رسمی را وارد کن؛ اگر قبلاً وارد کرده‌ای، این نسخه پس از راه‌اندازی مجدد هم آن را بازیابی می‌کند.")
     }
 
     if (data.hasPreviousSnapshot) {
@@ -326,6 +328,18 @@ private fun performFullAnalysis(context: Context, data: InstagramData): List<Ana
 private object InstagramExportParser {
     private val followerFile = Regex("(^|/)followers(_\\d+)?\\.json$", RegexOption.IGNORE_CASE)
     private val followingFile = Regex("(^|/)following(_\\d+)?\\.json$", RegexOption.IGNORE_CASE)
+
+    fun loadLatest(context: Context): InstagramData {
+        val prefs = context.getSharedPreferences("insta_relationship_history", Context.MODE_PRIVATE)
+        if (!prefs.contains("snapshot_at")) return InstagramData()
+        val followers = prefs.getStringSet("followers", emptySet())?.toSet() ?: emptySet()
+        val following = prefs.getStringSet("following", emptySet())?.toSet() ?: emptySet()
+        return InstagramData(
+            followers = followers,
+            following = following,
+            relationshipDataLoaded = true
+        )
+    }
 
     fun parse(context: Context, uri: Uri): InstagramData {
         val source = context.contentResolver.openInputStream(uri)
@@ -519,7 +533,8 @@ private object InstagramExportParser {
             lostFollowers = diff.lostFollowers,
             newFollowing = diff.newFollowing,
             removedFollowing = diff.removedFollowing,
-            hasPreviousSnapshot = hasPrevious
+            hasPreviousSnapshot = hasPrevious,
+            relationshipDataLoaded = true
         )
     }
 }
