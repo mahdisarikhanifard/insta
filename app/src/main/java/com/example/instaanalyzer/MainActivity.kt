@@ -7,6 +7,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.lifecycle.lifecycleScope
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
@@ -28,7 +29,9 @@ import com.google.gson.stream.JsonReader
 import com.google.gson.stream.JsonToken
 import java.io.BufferedInputStream
 import java.io.InputStreamReader
-import java.util.zip.ZipInputStream
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 private val Ink = Color(0xFF21162C)
 private val Pink = Color(0xFFC13C86)
@@ -37,10 +40,18 @@ private val Canvas = Color(0xFFF7F4F8)
 class MainActivity : ComponentActivity() {
     private var importedData by mutableStateOf(InstagramData())
     private var pendingCsv by mutableStateOf("")
+    private var isImporting by mutableStateOf(false)
     private val picker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
-        uri?.let {
-            importedData = runCatching { InstagramExportParser.parse(this, it) }
-                .getOrElse { e -> InstagramData(error = e.message ?: "فایل قابل خواندن نیست") }
+        uri?.let { selectedUri ->
+            isImporting = true
+            lifecycleScope.launch {
+                val result = withContext(Dispatchers.IO) {
+                    runCatching { RelationshipSnapshotStore.parse(this@MainActivity, selectedUri) }
+                        .getOrElse { e -> InstagramData(error = e.message ?: "فایل قابل خواندن نیست") }
+                }
+                importedData = result
+                isImporting = false
+            }
         }
     }
     private val csvPicker = registerForActivityResult(ActivityResultContracts.CreateDocument("text/csv")) { uri ->
@@ -52,11 +63,12 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        importedData = InstagramExportParser.loadLatest(this)
+        importedData = RelationshipSnapshotStore.loadLatest(this)
         setContent {
             MaterialTheme(colorScheme = lightColorScheme(primary = Pink, background = Canvas, surface = Color.White)) {
                 AnalyzerHome(
                     data = importedData,
+                    isImporting = isImporting,
                     onImport = { picker.launch(arrayOf("application/zip", "application/json", "text/*")) },
                     onExportCsv = { csv -> pendingCsv = csv; csvPicker.launch("insta-content-report.csv") }
                 )
@@ -74,7 +86,10 @@ data class InstagramData(
     val newFollowing: Set<String> = emptySet(),
     val removedFollowing: Set<String> = emptySet(),
     val hasPreviousSnapshot: Boolean = false,
-    val relationshipDataLoaded: Boolean = false
+    val relationshipDataLoaded: Boolean = false,
+    val followerFiles: Int = 0,
+    val followingFiles: Int = 0,
+    val importedAt: Long = 0L
 ) {
     val notFollowingBack: List<String> get() = following.minus(followers).sorted()
     val fansNotFollowed: List<String> get() = followers.minus(following).sorted()
@@ -82,7 +97,7 @@ data class InstagramData(
 }
 
 @Composable
-private fun AnalyzerHome(data: InstagramData, onImport: () -> Unit, onExportCsv: (String) -> Unit) {
+private fun AnalyzerHome(data: InstagramData, isImporting: Boolean, onImport: () -> Unit, onExportCsv: (String) -> Unit) {
     var tab by remember { mutableStateOf(0) }
     var relationshipQuery by remember { mutableStateOf("") }
     val context = LocalContext.current
@@ -98,6 +113,9 @@ private fun AnalyzerHome(data: InstagramData, onImport: () -> Unit, onExportCsv:
                 Metric("بدون فالو‌بک", data.notFollowingBack.size.toString())
             }
         }
+        if (isImporting) {
+            LinearProgressIndicator(Modifier.fillMaxWidth())
+        }
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 10.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             tabs.forEachIndexed { i, title ->
                 FilterChip(selected = tab == i, onClick = { tab = i }, label = { Text(title, maxLines = 1) })
@@ -107,7 +125,7 @@ private fun AnalyzerHome(data: InstagramData, onImport: () -> Unit, onExportCsv:
             0 -> LazyColumn(Modifier.weight(1f).padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 item {
                     Panel("شروع تحلیل", "فایل ZIP یا JSON خروجی رسمی اطلاعات حساب اینستاگرام را وارد کن.") {
-                        Button(onClick = onImport, modifier = Modifier.fillMaxWidth()) { Text("وارد کردن خروجی اینستاگرام") }
+                        Button(onClick = onImport, enabled = !isImporting, modifier = Modifier.fillMaxWidth()) { Text(if (isImporting) "در حال خواندن فایل..." else "وارد کردن خروجی اینستاگرام") }
                     }
                 }
                 item {
@@ -131,13 +149,17 @@ private fun AnalyzerHome(data: InstagramData, onImport: () -> Unit, onExportCsv:
                                 "فالوورها: ${data.followers.size}  ·  فالووینگ: ${data.following.size}  ·  فالو‌بک نداده: ${data.notFollowingBack.size}",
                                 fontSize = 12.sp, color = Color(0xFF655B6B), lineHeight = 18.sp
                             )
+                            if (data.relationshipDataLoaded) Text(
+                                "فایل‌های خوانده‌شده: ${data.followerFiles} بخش فالوور و ${data.followingFiles} بخش فالووینگ.",
+                                fontSize = 11.sp, color = Color(0xFF655B6B)
+                            )
                             Text(
                                 "نام کاربری هر حساب را لمس کن تا پروفایل آن در اینستاگرام باز شود.",
                                 fontSize = 12.sp, color = Color.Gray
                             )
                             Spacer(Modifier.height(8.dp))
-                            Button(onClick = onImport, modifier = Modifier.fillMaxWidth()) {
-                                Text(if (data.relationshipDataLoaded) "وارد کردن خروجی جدید" else "انتخاب فایل خروجی اینستاگرام")
+                            Button(onClick = onImport, enabled = !isImporting, modifier = Modifier.fillMaxWidth()) {
+                                Text(if (isImporting) "در حال خواندن فایل..." else if (data.relationshipDataLoaded) "وارد کردن خروجی جدید" else "انتخاب فایل خروجی اینستاگرام")
                             }
                             if (data.error != null) {
                                 Spacer(Modifier.height(8.dp))
@@ -193,7 +215,7 @@ private fun AnalyzerHome(data: InstagramData, onImport: () -> Unit, onExportCsv:
             3 -> ContentStudioPanel(onExportCsv)
             else -> AnalysisCenter(data)
         }
-        Text("نسخه 2.1.4 · فهرست لینک‌دار ارتباطات", Modifier.fillMaxWidth().padding(10.dp), textAlign = TextAlign.Center, color = Color.Gray, fontSize = 11.sp)
+        Text("نسخه 2.2.0 · تحلیل ارتباطات و تاریخچه پایدار", Modifier.fillMaxWidth().padding(10.dp), textAlign = TextAlign.Center, color = Color.Gray, fontSize = 11.sp)
     }
 }
 
@@ -389,216 +411,81 @@ private fun performFullAnalysis(context: Context, data: InstagramData): List<Ana
     return result
 }
 
-private object InstagramExportParser {
-    private val followerFile = Regex("(^|/)followers(_\\d+)?\\.json$", RegexOption.IGNORE_CASE)
-    private val followingFile = Regex("(^|/)following(_\\d+)?\\.json$", RegexOption.IGNORE_CASE)
+
+private object RelationshipSnapshotStore {
+    private const val PREFS = "insta_relationship_history"
+
+    fun parse(context: Context, uri: Uri): InstagramData {
+        val displayName = context.contentResolver.query(
+            uri,
+            arrayOf(android.provider.OpenableColumns.DISPLAY_NAME),
+            null,
+            null,
+            null
+        )?.use { cursor ->
+            if (cursor.moveToFirst()) cursor.getString(0) else null
+        } ?: uri.lastPathSegment.orEmpty()
+
+        val input = context.contentResolver.openInputStream(uri)
+            ?: error("فایل انتخاب‌شده قابل خواندن نیست.")
+        val parsed = InstagramExportParser.parse(input, displayName)
+        return recordSnapshot(context, parsed)
+    }
 
     fun loadLatest(context: Context): InstagramData {
-        val prefs = context.getSharedPreferences("insta_relationship_history", Context.MODE_PRIVATE)
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         if (!prefs.contains("snapshot_at")) return InstagramData()
-        val followers = prefs.getStringSet("followers", emptySet())?.toSet() ?: emptySet()
-        val following = prefs.getStringSet("following", emptySet())?.toSet() ?: emptySet()
         return InstagramData(
-            followers = followers,
-            following = following,
-            relationshipDataLoaded = true
+            followers = prefs.getStringSet("followers", emptySet())?.toSet() ?: emptySet(),
+            following = prefs.getStringSet("following", emptySet())?.toSet() ?: emptySet(),
+            newFollowers = prefs.getStringSet("last_new_followers", emptySet())?.toSet() ?: emptySet(),
+            lostFollowers = prefs.getStringSet("last_lost_followers", emptySet())?.toSet() ?: emptySet(),
+            newFollowing = prefs.getStringSet("last_new_following", emptySet())?.toSet() ?: emptySet(),
+            removedFollowing = prefs.getStringSet("last_removed_following", emptySet())?.toSet() ?: emptySet(),
+            hasPreviousSnapshot = prefs.getBoolean("has_previous_snapshot", false),
+            relationshipDataLoaded = true,
+            followerFiles = prefs.getInt("follower_files", 0),
+            followingFiles = prefs.getInt("following_files", 0),
+            importedAt = prefs.getLong("snapshot_at", 0L)
         )
     }
 
-    fun parse(context: Context, uri: Uri): InstagramData {
-        val source = context.contentResolver.openInputStream(uri)
-            ?: error("فایل انتخاب‌شده قابل خواندن نیست")
-
-        BufferedInputStream(source).use { buffered ->
-            buffered.mark(4)
-            val signature = ByteArray(4)
-            val count = buffered.read(signature)
-            buffered.reset()
-            if (count <= 0) error("فایل خالی است")
-
-            val isZip = count >= 2 &&
-                signature[0] == 0x50.toByte() &&
-                signature[1] == 0x4B.toByte()
-
-            return if (isZip) parseZip(context, buffered) else parseJson(context, buffered)
-        }
-    }
-
-    /**
-     * Reads only the two relationship JSON entries from the archive.
-     * Neither the complete ZIP nor a complete JSON document is copied into memory.
-     */
-    private fun parseZip(context: Context, input: java.io.InputStream): InstagramData {
-        val followers = linkedSetOf<String>()
-        val following = linkedSetOf<String>()
-        var foundFollowers = false
-        var foundFollowing = false
-
-        ZipInputStream(input).use { zip ->
-            while (true) {
-                val entry = zip.nextEntry ?: break
-                if (!entry.isDirectory && entry.name.endsWith(".json", ignoreCase = true)) {
-                    val normalized = entry.name.replace('\\', '/')
-                    when {
-                        followerFile.containsMatchIn(normalized) -> {
-                            foundFollowers = true
-                            readNamesFromCurrentZipEntry(zip, followers)
-                        }
-                        followingFile.containsMatchIn(normalized) -> {
-                            foundFollowing = true
-                            readNamesFromCurrentZipEntry(zip, following)
-                        }
-                    }
-                }
-                zip.closeEntry()
-            }
-        }
-
-        if (!foundFollowers && !foundFollowing) {
-            error("در ZIP فایل‌های followers_1.json یا following.json پیدا نشد.")
-        }
-        if (!foundFollowers || !foundFollowing) {
-            error("فایل ZIP ناقص است: فهرست followers یا following پیدا نشد.")
-        }
-        if (followers.isEmpty() && following.isEmpty()) {
-            error("فایل‌های ارتباطی پیدا شدند، اما نام کاربری قابل استخراج نبود.")
-        }
-        return recordSnapshot(context, followers, following)
-    }
-
-    private fun readNamesFromCurrentZipEntry(
-        zip: ZipInputStream,
-        output: MutableSet<String>
-    ) {
-        // Do not close this JsonReader: it wraps the ZipInputStream, which must
-        // remain open so the archive can advance to its next entry.
-        val reader = JsonReader(InputStreamReader(zip, Charsets.UTF_8))
-        reader.isLenient = true
-        collectNames(reader, output)
-    }
-
-    private fun parseJson(context: Context, input: java.io.InputStream): InstagramData {
-        val followers = linkedSetOf<String>()
-        val following = linkedSetOf<String>()
-        val reader = JsonReader(InputStreamReader(input, Charsets.UTF_8))
-        reader.isLenient = true
-        collectNamedLists(reader, followers, following)
-
-        if (followers.isEmpty() && following.isEmpty()) {
-            error("این فایل JSON شامل فهرست followers یا following قابل‌شناسایی نیست.")
-        }
-        return recordSnapshot(context, followers, following)
-    }
-
-    /**
-     * Traverses JSON tokens incrementally. Only username strings are retained.
-     */
-    private fun collectNames(reader: JsonReader, output: MutableSet<String>) {
-        when (reader.peek()) {
-            JsonToken.BEGIN_OBJECT -> {
-                reader.beginObject()
-                while (reader.hasNext()) {
-                    val name = reader.nextName()
-                    if (name == "string_list_data" && reader.peek() == JsonToken.BEGIN_ARRAY) {
-                        readStringListData(reader, output)
-                    } else {
-                        collectNames(reader, output)
-                    }
-                }
-                reader.endObject()
-            }
-            JsonToken.BEGIN_ARRAY -> {
-                reader.beginArray()
-                while (reader.hasNext()) collectNames(reader, output)
-                reader.endArray()
-            }
-            else -> reader.skipValue()
-        }
-    }
-
-    private fun readStringListData(reader: JsonReader, output: MutableSet<String>) {
-        reader.beginArray()
-        while (reader.hasNext()) {
-            if (reader.peek() == JsonToken.BEGIN_OBJECT) {
-                reader.beginObject()
-                while (reader.hasNext()) {
-                    val name = reader.nextName()
-                    if (name == "value" && reader.peek() == JsonToken.STRING) {
-                        reader.nextString().trim().removePrefix("@")
-                            .takeIf { it.matches(Regex("[A-Za-z0-9._]{1,30}")) }
-                            ?.let(output::add)
-                    } else {
-                        collectNames(reader, output)
-                    }
-                }
-                reader.endObject()
-            } else {
-                collectNames(reader, output)
-            }
-        }
-        reader.endArray()
-    }
-
-    private fun collectNamedLists(
-        reader: JsonReader,
-        followers: MutableSet<String>,
-        following: MutableSet<String>
-    ) {
-        when (reader.peek()) {
-            JsonToken.BEGIN_OBJECT -> {
-                reader.beginObject()
-                while (reader.hasNext()) {
-                    val name = reader.nextName()
-                    when {
-                        name.equals("followers", true) || name.matches(Regex("followers_\\d+", RegexOption.IGNORE_CASE)) ->
-                            collectNames(reader, followers)
-                        name.equals("following", true) || name.matches(Regex("following_\\d+", RegexOption.IGNORE_CASE)) ->
-                            collectNames(reader, following)
-                        else -> collectNamedLists(reader, followers, following)
-                    }
-                }
-                reader.endObject()
-            }
-            JsonToken.BEGIN_ARRAY -> {
-                // Preserve compatibility with a JSON array containing one relationship list.
-                val temporary = linkedSetOf<String>()
-                collectNames(reader, temporary)
-                followers.addAll(temporary)
-                following.addAll(temporary)
-            }
-            else -> reader.skipValue()
-        }
-    }
-
-    private fun recordSnapshot(
-        context: Context,
-        followers: Set<String>,
-        following: Set<String>
-    ): InstagramData {
-        val prefs = context.getSharedPreferences("insta_relationship_history", Context.MODE_PRIVATE)
+    private fun recordSnapshot(context: Context, parsed: ParsedRelationships): InstagramData {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val oldFollowers = prefs.getStringSet("followers", emptySet())?.toSet() ?: emptySet()
         val oldFollowing = prefs.getStringSet("following", emptySet())?.toSet() ?: emptySet()
         val hasPrevious = prefs.contains("snapshot_at")
         val diff = if (hasPrevious) {
-            RelationshipAnalytics.compare(oldFollowers, followers, oldFollowing, following)
+            RelationshipAnalytics.compare(oldFollowers, parsed.followers, oldFollowing, parsed.following)
         } else {
             RelationshipChange()
         }
+        val now = System.currentTimeMillis()
         prefs.edit()
-            .putStringSet("followers", followers)
-            .putStringSet("following", following)
-            .putLong("snapshot_at", System.currentTimeMillis())
+            .putStringSet("followers", parsed.followers.toSet())
+            .putStringSet("following", parsed.following.toSet())
+            .putStringSet("last_new_followers", diff.newFollowers.toSet())
+            .putStringSet("last_lost_followers", diff.lostFollowers.toSet())
+            .putStringSet("last_new_following", diff.newFollowing.toSet())
+            .putStringSet("last_removed_following", diff.removedFollowing.toSet())
+            .putBoolean("has_previous_snapshot", hasPrevious)
+            .putInt("follower_files", parsed.followerFiles)
+            .putInt("following_files", parsed.followingFiles)
+            .putLong("snapshot_at", now)
             .apply()
 
         return InstagramData(
-            followers = followers,
-            following = following,
+            followers = parsed.followers,
+            following = parsed.following,
             newFollowers = diff.newFollowers,
             lostFollowers = diff.lostFollowers,
             newFollowing = diff.newFollowing,
             removedFollowing = diff.removedFollowing,
             hasPreviousSnapshot = hasPrevious,
-            relationshipDataLoaded = true
+            relationshipDataLoaded = true,
+            followerFiles = parsed.followerFiles,
+            followingFiles = parsed.followingFiles,
+            importedAt = now
         )
     }
 }

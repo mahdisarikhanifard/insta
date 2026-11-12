@@ -11,8 +11,8 @@ android {
         applicationId = "com.example.instaanalyzer"
         minSdk = 26
         targetSdk = 35
-        versionCode = 10
-        versionName = "2.1.5"
+        versionCode = 11
+        versionName = "2.2.0"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
