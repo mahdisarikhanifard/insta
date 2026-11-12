@@ -128,9 +128,21 @@ private fun AnalyzerHome(data: InstagramData, onImport: () -> Unit, onExportCsv:
                             Text("فهرست فالو‌بک نداده‌ها", fontWeight = FontWeight.Bold, color = Ink, fontSize = 17.sp)
                             Spacer(Modifier.height(5.dp))
                             Text(
-                                "${data.notFollowingBack.size} حساب از فالووینگ تو، در فهرست فالوورهای تو نیستند. روی نام کاربری بزن تا پروفایل همان حساب در اینستاگرام باز شود.",
-                                fontSize = 12.sp, color = Color.Gray, lineHeight = 18.sp
+                                "فالوورها: ${data.followers.size}  ·  فالووینگ: ${data.following.size}  ·  فالو‌بک نداده: ${data.notFollowingBack.size}",
+                                fontSize = 12.sp, color = Color(0xFF655B6B), lineHeight = 18.sp
                             )
+                            Text(
+                                "نام کاربری هر حساب را لمس کن تا پروفایل آن در اینستاگرام باز شود.",
+                                fontSize = 12.sp, color = Color.Gray
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            Button(onClick = onImport, modifier = Modifier.fillMaxWidth()) {
+                                Text(if (data.relationshipDataLoaded) "وارد کردن خروجی جدید" else "انتخاب فایل خروجی اینستاگرام")
+                            }
+                            if (data.error != null) {
+                                Spacer(Modifier.height(8.dp))
+                                Text("خطای ورود اطلاعات: ${data.error}", color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                            }
                             Spacer(Modifier.height(10.dp))
                             OutlinedTextField(
                                 value = relationshipQuery,
@@ -143,9 +155,15 @@ private fun AnalyzerHome(data: InstagramData, onImport: () -> Unit, onExportCsv:
                         }
                     }
                     if (!data.relationshipDataLoaded) {
-                        item { Panel("ابتدا اطلاعات را وارد کن", "فایل ZIP یا JSON خروجی رسمی اینستاگرام را از بخش نمای کلی وارد کن تا فهرست واقعی حساب‌ها نمایش داده شود.") {} }
+                        item {
+                            Panel("هنوز فهرست ارتباطات بارگذاری نشده", "از دکمه «انتخاب فایل خروجی اینستاگرام» در همین صفحه استفاده کن. فایل باید ZIP یا JSON خروجی رسمی و شامل followers و following باشد.") {}
+                        }
+                    } else if (data.following.isEmpty()) {
+                        item {
+                            Panel("فهرست فالووینگ خالی است", "برنامه ${data.followers.size} فالوور را خوانده، اما هیچ حسابی از فایل فالووینگ استخراج نکرده است. احتمالاً فایل یا قالب خروجی انتخاب‌شده کامل نیست؛ ZIP اصلی با قالب JSON را دوباره وارد کن.") {}
+                        }
                     } else if (data.notFollowingBack.isEmpty()) {
-                        item { Panel("موردی پیدا نشد", "طبق آخرین خروجی واردشده، همه حساب‌هایی که دنبال می‌کنی در فهرست فالوورهای تو هم هستند.") {} }
+                        item { Panel("موردی برای نمایش وجود ندارد", "از ${data.following.size} حسابی که دنبال می‌کنی، هیچ‌کدام در این خروجی از فهرست فالوورها جا نمانده‌اند. اگر این نتیجه با اینستاگرام مطابقت ندارد، ZIP اصلی را دوباره وارد کن و تعداد فالوورها و فالووینگ را بررسی کن.") {} }
                     } else if (filteredNotFollowingBack.isEmpty()) {
                         item { Text("با این عبارت، نام کاربری‌ای پیدا نشد.", color = Color.Gray, modifier = Modifier.padding(12.dp)) }
                     } else {
