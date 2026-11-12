@@ -93,14 +93,15 @@ object InstagramExportParser {
             else -> collectNamedRelationships(reader, followers, following)
         }
 
-        require(followers.isNotEmpty() || following.isNotEmpty()) {
+        val filenameIdentifiesList = followerFile.matches(basename) || followingFile.matches(basename)
+        require(filenameIdentifiesList || followers.isNotEmpty() || following.isNotEmpty()) {
             "این JSON قابل تشخیص نیست. برای ورود مطمئن، ZIP اصلی خروجی اینستاگرام را انتخاب کن؛ یا فایل followers_1.json یا following.json را جداگانه انتخاب کن."
         }
         return ParsedRelationships(
             followers = followers,
             following = following,
-            followerFiles = if (followers.isNotEmpty()) 1 else 0,
-            followingFiles = if (following.isNotEmpty()) 1 else 0
+            followerFiles = if (followerFile.matches(basename) || followers.isNotEmpty()) 1 else 0,
+            followingFiles = if (followingFile.matches(basename) || following.isNotEmpty()) 1 else 0
         )
     }
 

@@ -54,6 +54,15 @@ class InstagramExportParserTest {
         assertEquals(setOf("friend"), parsed.following)
     }
 
+    @Test fun acceptsAnExplicitlyNamedEmptyFollowingJson() {
+        val parsed = InstagramExportParser.parse(
+            ByteArrayInputStream("""{"relationships_following":[]}""".toByteArray()),
+            "following.json"
+        )
+        assertTrue(parsed.following.isEmpty())
+        assertEquals(1, parsed.followingFiles)
+    }
+
     @Test fun rejectsAmbiguousUnnamedJsonInsteadOfCopyingItIntoBothLists() {
         val json = "[${relation("Someone")}]"
         val error = runCatching {

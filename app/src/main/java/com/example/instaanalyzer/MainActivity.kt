@@ -100,6 +100,7 @@ data class InstagramData(
 private fun AnalyzerHome(data: InstagramData, isImporting: Boolean, onImport: () -> Unit, onExportCsv: (String) -> Unit) {
     var tab by remember { mutableStateOf(0) }
     var relationshipQuery by remember { mutableStateOf("") }
+    var relationshipMode by remember { mutableStateOf(0) }
     val context = LocalContext.current
     val tabs = listOf("نمای کلی", "ارتباطات", "رشد پیج", "محتوا", "تحلیل")
     Column(Modifier.fillMaxSize().background(Canvas)) {
@@ -137,16 +138,22 @@ private fun AnalyzerHome(data: InstagramData, isImporting: Boolean, onImport: ()
                 if (data.error != null) item { Panel("پیام", data.error) {} }
             }
             1 -> {
-                val filteredNotFollowingBack = data.notFollowingBack.filter {
+                val relationshipTitles = listOf("فالو‌بک نداده‌ها", "فالوورهای یک‌طرفه", "ارتباط دوطرفه")
+                val selectedUsers = when (relationshipMode) {
+                    0 -> data.notFollowingBack
+                    1 -> data.fansNotFollowed
+                    else -> data.mutual.sorted()
+                }
+                val filteredUsers = selectedUsers.filter {
                     it.contains(relationshipQuery.trim(), ignoreCase = true)
                 }
                 LazyColumn(Modifier.weight(1f).padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     item {
                         Column(Modifier.fillMaxWidth().background(Color.White, RoundedCornerShape(16.dp)).padding(14.dp)) {
-                            Text("فهرست فالو‌بک نداده‌ها", fontWeight = FontWeight.Bold, color = Ink, fontSize = 17.sp)
+                            Text("تحلیل ارتباطات", fontWeight = FontWeight.Bold, color = Ink, fontSize = 17.sp)
                             Spacer(Modifier.height(5.dp))
                             Text(
-                                "فالوورها: ${data.followers.size}  ·  فالووینگ: ${data.following.size}  ·  فالو‌بک نداده: ${data.notFollowingBack.size}",
+                                "فالوورها: ${data.followers.size}  ·  فالووینگ: ${data.following.size}",
                                 fontSize = 12.sp, color = Color(0xFF655B6B), lineHeight = 18.sp
                             )
                             if (data.relationshipDataLoaded) Text(
@@ -166,6 +173,18 @@ private fun AnalyzerHome(data: InstagramData, isImporting: Boolean, onImport: ()
                                 Text("خطای ورود اطلاعات: ${data.error}", color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
                             }
                             Spacer(Modifier.height(10.dp))
+                            Row(
+                                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                relationshipTitles.forEachIndexed { index, title ->
+                                    FilterChip(
+                                        selected = relationshipMode == index,
+                                        onClick = { relationshipMode = index },
+                                        label = { Text(title, maxLines = 1) }
+                                    )
+                                }
+                            }
                             OutlinedTextField(
                                 value = relationshipQuery,
                                 onValueChange = { relationshipQuery = it.removePrefix("@").take(30) },
@@ -174,22 +193,33 @@ private fun AnalyzerHome(data: InstagramData, isImporting: Boolean, onImport: ()
                                 label = { Text("جست‌وجوی نام کاربری") },
                                 placeholder = { Text("مثلاً username") }
                             )
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                "${relationshipTitles[relationshipMode]}: ${selectedUsers.size} حساب",
+                                fontSize = 12.sp, color = Pink, fontWeight = FontWeight.SemiBold
+                            )
                         }
                     }
                     if (!data.relationshipDataLoaded) {
                         item {
-                            Panel("هنوز فهرست ارتباطات بارگذاری نشده", "از دکمه «انتخاب فایل خروجی اینستاگرام» در همین صفحه استفاده کن. فایل باید ZIP یا JSON خروجی رسمی و شامل followers و following باشد.") {}
+                            Panel("هنوز فهرست ارتباطات بارگذاری نشده", "از دکمه بالا فایل ZIP اصلی یا فایل JSON مشخص followers_1.json / following.json را وارد کن.") {}
                         }
-                    } else if (data.following.isEmpty()) {
-                        item {
-                            Panel("فهرست فالووینگ خالی است", "برنامه ${data.followers.size} فالوور را خوانده، اما هیچ حسابی از فایل فالووینگ استخراج نکرده است. احتمالاً فایل یا قالب خروجی انتخاب‌شده کامل نیست؛ ZIP اصلی با قالب JSON را دوباره وارد کن.") {}
+                    } else if (selectedUsers.isEmpty()) {
+                        val emptyMessage = when (relationshipMode) {
+                            0 -> "در خروجی فعلی، هیچ حسابی در فهرست فالووینگ وجود ندارد که فالو‌بک نداده باشد."
+                            1 -> "در خروجی فعلی، هیچ فالووری وجود ندارد که تو دنبال او نباشی."
+                            else -> "در خروجی فعلی هیچ ارتباط دوطرفه‌ای ثبت نشده است."
                         }
-                    } else if (data.notFollowingBack.isEmpty()) {
-                        item { Panel("موردی برای نمایش وجود ندارد", "از ${data.following.size} حسابی که دنبال می‌کنی، هیچ‌کدام در این خروجی از فهرست فالوورها جا نمانده‌اند. اگر این نتیجه با اینستاگرام مطابقت ندارد، ZIP اصلی را دوباره وارد کن و تعداد فالوورها و فالووینگ را بررسی کن.") {} }
-                    } else if (filteredNotFollowingBack.isEmpty()) {
+                        item { Panel("این فهرست خالی است", emptyMessage) {} }
+                    } else if (filteredUsers.isEmpty()) {
                         item { Text("با این عبارت، نام کاربری‌ای پیدا نشد.", color = Color.Gray, modifier = Modifier.padding(12.dp)) }
                     } else {
-                        items(filteredNotFollowingBack, key = { it }) { username ->
+                        items(filteredUsers, key = { "$relationshipMode:$it" }) { username ->
+                            val relationDescription = when (relationshipMode) {
+                                0 -> "تو دنبال می‌کنی · او تو را دنبال نمی‌کند"
+                                1 -> "او تو را دنبال می‌کند · تو دنبال او نیستی"
+                                else -> "ارتباط دوطرفه"
+                            }
                             Row(
                                 Modifier.fillMaxWidth().background(Color.White, RoundedCornerShape(14.dp)).padding(horizontal = 10.dp, vertical = 8.dp),
                                 verticalAlignment = Alignment.CenterVertically
@@ -201,7 +231,7 @@ private fun AnalyzerHome(data: InstagramData, isImporting: Boolean, onImport: ()
                                     ) {
                                         Text("@$username", fontWeight = FontWeight.Bold, color = Pink, fontSize = 15.sp)
                                     }
-                                    Text("در فالووینگ هست · در فالوورها نیست", fontSize = 11.sp, color = Color.Gray)
+                                    Text(relationDescription, fontSize = 11.sp, color = Color.Gray)
                                 }
                                 TextButton(onClick = { openInstagramProfile(context, username) }) {
                                     Text("مشاهده پروفایل")
