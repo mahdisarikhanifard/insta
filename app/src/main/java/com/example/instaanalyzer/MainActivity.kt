@@ -47,7 +47,7 @@ class MainActivity : ComponentActivity() {
             lifecycleScope.launch {
                 val result = withContext(Dispatchers.IO) {
                     runCatching { RelationshipSnapshotStore.parse(this@MainActivity, selectedUri) }
-                        .getOrElse { e -> InstagramData(error = e.message ?: "فایل قابل خواندن نیست") }
+                        .getOrElse { e -> importedData.copy(error = e.message ?: "فایل قابل خواندن نیست") }
                 }
                 importedData = result
                 isImporting = false
@@ -215,7 +215,7 @@ private fun AnalyzerHome(data: InstagramData, isImporting: Boolean, onImport: ()
             3 -> ContentStudioPanel(onExportCsv)
             else -> AnalysisCenter(data)
         }
-        Text("نسخه 2.2.0 · تحلیل ارتباطات و تاریخچه پایدار", Modifier.fillMaxWidth().padding(10.dp), textAlign = TextAlign.Center, color = Color.Gray, fontSize = 11.sp)
+        Text("نسخه 2.2.1 · تحلیل ارتباطات و تاریخچه پایدار", Modifier.fillMaxWidth().padding(10.dp), textAlign = TextAlign.Center, color = Color.Gray, fontSize = 11.sp)
     }
 }
 
@@ -377,14 +377,14 @@ private fun performFullAnalysis(context: Context, data: InstagramData): List<Ana
             result += AnalysisCheck("عملکرد محتوا و نرخ تعامل", "نیازمند داده",
                 "محتوای دارای Reach معتبر ثبت نشده است؛ آمار ریلز، پست یا استوری را در بخش محتوا وارد کن.")
         }
-        if (formats.size >= 2) {
+        if (formats.size >= 2 && formats.values.all { it.size >= 3 }) {
             val best = formats.mapValues { it.value.average() }.maxByOrNull { it.value }
             result += AnalysisCheck("مقایسه قالب‌های محتوا", "موفق",
                 "قالب دارای میانگین نرخ تعامل بالاتر: " + (best?.key ?: "نامشخص") +
                     "؛ نتیجه فقط بر اساس محتواهای ثبت‌شده است.")
         } else {
             result += AnalysisCheck("مقایسه قالب‌های محتوا", "نیازمند داده",
-                "برای مقایسه ریلز، پست و استوری، داده معتبر از حداقل دو قالب لازم است.")
+                "برای مقایسه قابل اتکا، حداقل سه محتوای دارای Reach معتبر در هرکدام از دست‌کم دو قالب لازم است.")
         }
     }.onFailure {
         result += AnalysisCheck("عملکرد محتوا", "ناموفق",

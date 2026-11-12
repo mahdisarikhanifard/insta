@@ -133,19 +133,23 @@ object InstagramExportParser {
         reader.beginArray()
         while (reader.hasNext()) {
             if (reader.peek() == JsonToken.BEGIN_OBJECT) {
+                var exportedValue: String? = null
+                var profileHref: String? = null
                 reader.beginObject()
                 while (reader.hasNext()) {
                     val key = reader.nextName()
-                    if (key.equals("value", ignoreCase = true) &&
-                        reader.peek() == JsonToken.STRING
-                    ) {
-                        val username = normalizeUsername(reader.nextString())
-                        if (username != null) output.add(username)
-                    } else {
-                        reader.skipValue()
+                    when {
+                        key.equals("value", ignoreCase = true) && reader.peek() == JsonToken.STRING ->
+                            exportedValue = reader.nextString()
+                        key.equals("href", ignoreCase = true) && reader.peek() == JsonToken.STRING ->
+                            profileHref = reader.nextString()
+                        else -> reader.skipValue()
                     }
                 }
                 reader.endObject()
+                val rawUsername = exportedValue ?: usernameFromHref(profileHref)
+                val username = rawUsername?.let(::normalizeUsername)
+                if (username != null) output.add(username)
             } else {
                 reader.skipValue()
             }
@@ -185,6 +189,15 @@ object InstagramExportParser {
             }
             else -> reader.skipValue()
         }
+    }
+
+    private fun usernameFromHref(href: String?): String? {
+        if (href.isNullOrBlank()) return null
+        val match = Regex(
+            "^https?://(?:www\\.)?instagram\\.com/([A-Za-z0-9._]{1,30})/?(?:[?#].*)?$",
+            RegexOption.IGNORE_CASE
+        ).matchEntire(href.trim()) ?: return null
+        return match.groupValues[1]
     }
 
     private fun normalizeUsername(raw: String): String? {

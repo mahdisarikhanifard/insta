@@ -12,6 +12,9 @@ class InstagramExportParserTest {
     private fun relation(username: String): String =
         """{"title":"$username","string_list_data":[{"href":"https://www.instagram.com/$username/","value":"$username","timestamp":1700000000}]}"""
 
+    private fun relationHrefOnly(username: String): String =
+        """{"title":"$username","string_list_data":[{"href":"https://www.instagram.com/$username/","timestamp":1700000000}]}"""
+
     private fun zip(vararg entries: Pair<String, String>): ByteArray {
         val output = ByteArrayOutputStream()
         ZipOutputStream(output).use { archive ->
@@ -28,7 +31,7 @@ class InstagramExportParserTest {
         val bytes = zip(
             "connections/followers_and_following/followers_1.json" to "[${relation("Alice")}]",
             "connections/followers_and_following/followers_2.json" to "[${relation("bob")}]",
-            "connections/followers_and_following/following.json" to """{"relationships_following":[${relation("Bob")},${relation("carol")}]}"""
+            "connections/followers_and_following/following.json" to """{"relationships_following":[${relationHrefOnly("Bob")},${relationHrefOnly("carol")}]}"""
         )
         val parsed = InstagramExportParser.parse(ByteArrayInputStream(bytes), "instagram-export.zip")
         assertEquals(setOf("alice", "bob"), parsed.followers)
@@ -45,7 +48,7 @@ class InstagramExportParserTest {
     }
 
     @Test fun parsesStandaloneFollowingJsonUsingInstagramWrapperKey() {
-        val json = """{"relationships_following":[${relation("Friend")}]}"""
+        val json = """{"relationships_following":[${relationHrefOnly("Friend")}]}"""
         val parsed = InstagramExportParser.parse(ByteArrayInputStream(json.toByteArray()), "following.json")
         assertTrue(parsed.followers.isEmpty())
         assertEquals(setOf("friend"), parsed.following)
@@ -59,10 +62,17 @@ class InstagramExportParserTest {
         assertTrue(error?.message?.contains("قابل تشخیص نیست") == true)
     }
 
+    @Test fun parsesACombinedJsonWithExplicitRelationshipKeys() {
+        val json = """{"relationships_followers":[${relation("Fan")}],"relationships_following":[${relationHrefOnly("Followed")}]}"""
+        val parsed = InstagramExportParser.parse(ByteArrayInputStream(json.toByteArray()), "relationships.json")
+        assertEquals(setOf("fan"), parsed.followers)
+        assertEquals(setOf("followed"), parsed.following)
+    }
+
     @Test fun permitsAValidEmptyFollowerListWhenFollowingExists() {
         val bytes = zip(
             "followers_1.json" to "[]",
-            "following.json" to """{"relationships_following":[${relation("onlyfollowing")}]}"""
+            "following.json" to """{"relationships_following":[${relationHrefOnly("onlyfollowing")}]}"""
         )
         val parsed = InstagramExportParser.parse(ByteArrayInputStream(bytes), "export.zip")
         assertTrue(parsed.followers.isEmpty())

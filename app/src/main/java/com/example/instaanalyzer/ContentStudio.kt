@@ -118,9 +118,11 @@ internal fun ContentStudioPanel(onExportCsv: (String) -> Unit) {
     val totalReach = records.sumOf { it.reach.toLong() }
     val totalInteractions = records.sumOf { it.interactions.toLong() }
     val weightedRate = if (totalReach > 0) totalInteractions * 100.0 / totalReach else null
-    val best = records.filter { it.engagementRate != null }.groupBy { it.format }
+    val comparableFormatRates = records.filter { it.engagementRate != null }
+        .groupBy { it.format }
+        .filterValues { it.size >= 3 }
         .mapValues { (_, list) -> list.mapNotNull { it.engagementRate }.average() }
-        .maxByOrNull { it.value }
+    val best = comparableFormatRates.maxByOrNull { it.value }
 
     LazyColumn(
         Modifier.fillMaxSize().padding(horizontal = 16.dp),
@@ -204,7 +206,7 @@ internal fun ContentStudioPanel(onExportCsv: (String) -> Unit) {
                     StudioPanel(
                         "بهترین قالب ثبت‌شده",
                         when {
-                            records.size < 3 -> "برای پیشنهاد قابل اتکا، حداقل سه محتوای دارای Reach و تعامل ثبت کن. فعلاً داده کافی برای انتخاب قالب برتر نداریم."
+                            comparableFormatRates.size < 2 -> "برای مقایسه قابل اتکا، حداقل سه محتوای دارای Reach معتبر در هرکدام از دست‌کم دو قالب ثبت کن. فعلاً داده کافی برای انتخاب قالب برتر نداریم."
                             best == null -> "Reach برای محتواها ثبت نشده است؛ نرخ تعامل قابل محاسبه نیست."
                             else -> "در داده‌های فعلی، قالب «${best.key}» با میانگین نرخ تعامل ${String.format(Locale.US, "%.2f%%", best.value)} بهترین عملکرد را داشته است. این نتیجه توصیفی است، نه تضمین عملکرد آینده."
                         }
